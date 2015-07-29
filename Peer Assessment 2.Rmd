@@ -1,0 +1,176 @@
+---
+title: Data analysis of the U.S. National Oceanic and Atmospheric Administration’s
+  (NOAA) storm database
+author: "Morozov Gleb"
+date: "Sunday, April 26, 2015"
+output: html_document
+---
+
+# Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+The report explores U.S. National Oceanic and Atmospheric Administration's (NOAA) dataset. This dataset contains gathered statistical data on weather events for period 1950-2011 years. It also includes information on healthy and economycal damage.
+
+The report target is to represent the top 10 most dangerous weather events from health and economic points of view. Also aggregated impact data by event type is available. Economy damage is calculated as sum of crop and property damages.
+
+# Data Processing
+
+Loading packages
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+```
+
+Loading the dataset. Link availability was checked on April 26 2015
+```{r, message=FALSE, , eval=FALSE}
+fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(fileUrl, "stormdata.csv.bz2", mode = "wb", method="curl")
+data <- read.csv("stormdata.csv.bz2", stringsAsFactors = F)
+```
+
+Look at the raw data
+```{r}
+str(data)
+```
+
+Select only related columns and cast analised strings to equal case
+```{r}
+names(data) <- tolower(names(data))
+data %<>% select(evtype, fatalities:cropdmgexp) %>% 
+        mutate(cropdmgexp = tolower(cropdmgexp)) %>%
+        mutate(propdmgexp = tolower(propdmgexp)) %>%
+        mutate(evtype = tolower(evtype))
+str(data)
+```
+
+Look at the number of occurrences of the event types
+```{r}
+data %>% select(evtype) %>%
+        group_by(evtype) %>% 
+        summarise(freq = n()) %>%
+        arrange(desc(freq)) %T>% 
+        print(n = 15) %>%
+        with(cat("Fraction first ten event types:", round(sum(freq[1:10])/sum(freq), 2)*100, "%"))
+```
+
+Combine together *thunderstorm winds*, *thunderstorm wind*, *tstm wind*
+```{r}
+data$evtype %<>% gsub("thunderstorm winds", "thunderstorm wind", .) %>%
+        gsub("tstm wind", "thunderstorm wind", .)
+data %>% select(evtype) %>% 
+        group_by(evtype) %>% 
+        summarise(freq = n()) %>%
+        arrange(desc(freq)) %T>% 
+        print(n = 10) %>%
+        with(cat("Fraction first ten event type:", round(sum(freq[1:10])/sum(freq), 2)*100, "%"))
+```
+
+To calculate economic consequences the multiplier should be used. The multiplier is stored in *propdmgexp* and *cropdmgexp* columns as character or numeric values. Numeric values means power of 10 (e.g. multiplier 3 means 10^3). Character values: Hundred, Kilo, Million, Billion. Other values are assumed as 1
+```{r}
+data %>% select(propdmgexp) %>% 
+        group_by(propdmgexp) %>% 
+        summarise(freq = n()) %>% 
+        arrange(desc(freq))
+data$propdmgexp %<>% gsub("k", "3", .) %>% 
+        gsub("m", "6", .) %>% 
+        gsub("b", "9", .) %>%
+        gsub("\\?", "1", .) %>% 
+        gsub("h", "2", .) %>% 
+        gsub("\\+", "1", .) %>% 
+        gsub("\\-", "1", .)
+data$propdmgexp <- as.numeric(data$propdmgexp)
+data$propdmgexp[is.na(data$propdmgexp)] <- 0
+data %>% select(propdmgexp) %>% 
+        group_by(propdmgexp) %>% 
+        summarise(freq = n()) %>%
+        arrange(desc(freq))
+```
+
+Also in *cropdmgexp*
+```{r}
+data$cropdmgexp %<>% gsub("k", "3", .) %>% 
+        gsub("m", "6", .) %>% 
+        gsub("b", "9", .) %>% 
+        gsub("\\?", "1", .)
+data$cropdmgexp <- as.numeric(data$cropdmgexp)
+data$cropdmgexp[is.na(data$cropdmgexp)] <- 0
+data %>% select(cropdmgexp) %>% 
+        group_by(cropdmgexp) %>% 
+        summarise(freq = n()) %>% 
+        arrange(desc(freq))
+```
+
+Add new columns that sums property and crop damage
+```{r}
+data %<>% mutate(dmg = (propdmg * 10^propdmgexp) + (cropdmg * 10^cropdmgexp))
+```
+
+Look at the first ten events sorted by economic damage
+```{r}
+data %>%group_by(evtype) %>% 
+        summarise(sumdmg = sum(dmg)) %>% 
+        arrange(desc(sumdmg))
+```
+
+Combine together *hurricane* and *hurricane/typhoon*, *river flood* and *flood*
+```{r}
+data$evtype %<>% gsub("hurricane", "hurricane/typhoon", .) %>%
+        gsub("river flood", "flood", .) %>% 
+        gsub("/typhoon", "", .)
+```
+
+# Results
+
+## Question 1: Across the United States, which types of events are most harmful with respect to population health?
+
+The results for fatal events and injuries are presented separately since I consider that fatal events are more harmful with respect to the population healt than injuries.
+
+### Total Fatalities by Weather Events in the U.S.
+
+The top 10 event types with the highest number of fatalities are presented in the following barplot:
+```{r, fig.width = 8 }
+data %>%group_by(evtype) %>% 
+        summarise(sumfat = sum(fatalities)) %>% 
+        arrange(desc(sumfat)) %T>% 
+        print(n = 10) %>% 
+        slice(1:10) %>%
+        qplot(data = ., y = sumfat, x = evtype, geom = "bar", fill = I("steelblue"), stat = "identity") + 
+        labs(x="Event Type", y="Number of Fatalities", title="Total Fatalities by Weather Events") +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Total Injuries by Weather Events in the U.S.
+
+The top 10 event types with the highest number of injuries are presented in the following barplot:
+```{r, fig.width = 8}
+data %>%group_by(evtype) %>% 
+        summarise(suminj = sum(injuries)) %>% 
+        arrange(desc(suminj)) %T>% 
+        print(n = 10) %>% 
+        slice(1:10) %>%
+        qplot(data = ., y = suminj, x = evtype, geom = "bar", fill = I("steelblue"), stat = "identity") + 
+        labs(x="Event Type", y="Number of injuries", title="Total Injuries by Weather Events") +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Question 2: Across the United States, which types of events have the greatest economic consequences?
+
+The top 10 event types with the highest amount of economic damages are presented in the following barplot:
+```{r, fig.width = 8}
+data %>%group_by(evtype) %>% 
+        summarise(sumdmg = sum(dmg)) %>% 
+        arrange(desc(sumdmg)) %T>% 
+        print(n = 10) %>% 
+        slice(1:10) %>%
+        qplot(data = ., y = sumdmg/(10^9), x = evtype, geom = "bar", fill=I("steelblue"), stat="identity") + 
+        labs(x="Event Type", y="Total Economic Damages in bill $", title="Total economic damages by weather") +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Conclusion
+
+
+As shown from the report, the most dangerous weather event is tornado and the flood consequences are the most expensive.
+
